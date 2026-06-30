@@ -1,0 +1,205 @@
+--MAIN CODE
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TextChatService = game:GetService("TextChatService")
+local VIM = game:GetService("VirtualInputManager")
+
+local lp = Players.LocalPlayer
+local targetName = getgenv().TargetPlayer
+
+-- ===== CHAT =====
+local function say(msg)
+	local ch = TextChatService.ChatInputBarConfiguration.TargetTextChannel
+	if ch then
+		ch:SendAsync(msg)
+	end
+end
+
+-- ===== EXPLOIT =====
+pcall(function()
+	sethiddenproperty(lp,"SimulationRadius",math.huge)
+	sethiddenproperty(lp,"MaxSimulationRadius",math.huge)
+end)
+
+-- ===== OFFSETS =====
+local RIGHT_OFFSET = Vector3.new(-3,2.5,4)
+local LEFT_OFFSET  = Vector3.new(3,2.5,4)
+local FRONT_OFFSET = Vector3.new(0,0.1,-5.5)
+local VANISH_OFFSET = Vector3.new(0,-600,0)
+
+local STAND_OFFSET = (getgenv().standPosition=="left") and LEFT_OFFSET or RIGHT_OFFSET
+local ACTIVE_OFFSET = STAND_OFFSET
+local vanished = true
+local lowHPSaid = false
+
+-- ===== CHARACTER =====
+local char = lp.Character or lp.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+local hum = char:WaitForChild("Humanoid")
+hum.PlatformStand = true
+
+-- ===== IDLE ANIMATION =====
+local idleAnim = Instance.new("Animation")
+idleAnim.AnimationId = "rbxassetid://102058854064970"
+
+local idleTrack
+local animator = hum:WaitForChild("Animator")
+
+local function playIdle()
+	if idleTrack then idleTrack:Stop() end
+	idleTrack = animator:LoadAnimation(idleAnim)
+	idleTrack.Priority = Enum.AnimationPriority.Idle
+	idleTrack.Looped = true
+	idleTrack:Play()
+end
+
+local function stopIdle()
+	if idleTrack then idleTrack:Stop() end
+end
+
+-- ===== FORCES =====
+local bp = Instance.new("BodyPosition", hrp)
+bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+bp.P = 120000
+bp.D = 2000
+
+local bg = Instance.new("BodyGyro", hrp)
+bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+bg.P = 1e6
+bg.D = 150
+
+-- Save original P for restoring
+local normalP = 120000
+local attackP = 500000   -- Much stronger for instant movement
+
+-- ===== NOCLIP =====
+RunService.Stepped:Connect(function()
+	for _,v in ipairs(char:GetDescendants()) do
+		if v:IsA("BasePart") then
+			v.CanCollide = false
+		end
+	end
+end)
+
+-- ===== SKILLS =====
+local keyMap = {
+	[getgenv().SkillWord1] = Enum.KeyCode.One,
+	[getgenv().SkillWord2] = Enum.KeyCode.Two,
+	[getgenv().SkillWord3] = Enum.KeyCode.Three,
+	[getgenv().SkillWord4] = Enum.KeyCode.Four
+}
+
+local skillQuotes = { ... } -- (same as before)
+
+local cooldowns = { ... } -- (same as before)
+
+local lastUsed = {}
+local saidCD = {}
+
+local function press(k)
+	VIM:SendKeyEvent(true, k, false, game)
+	task.wait(0.05)
+	VIM:SendKeyEvent(false, k, false, game)
+end
+
+-- ===== TARGET =====
+local function getTargetHRP()
+	local p = Players:FindFirstChild(targetName)
+	return p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+end
+
+-- ===== CHAT HOOK =====
+local function hook(p)
+	p.Chatted:Connect(function(m)
+		m = m:lower():gsub("%s+","")
+
+		-- SUMMON
+		if m == getgenv().SummonWord and hum.Health/hum.MaxHealth > 0.25 then
+			vanished = false
+			lowHPSaid = false
+			say(math.random(1,2)==1 and getgenv().SummonQuote1 or getgenv().SummonQuote2)
+			playIdle()
+			return
+		end
+
+		-- DISMISS
+		if m == getgenv().DismissWord then
+			vanished = true
+			stopIdle()
+			say(math.random(1,2)==1 and getgenv().DismissQuote1 or getgenv().DismissQuote2)
+			return
+		end
+
+		-- SKILLS
+		if keyMap[m] and not vanished then
+			local now = tick()
+
+			if now - (lastUsed[m] or 0) < cooldowns[m] then
+				if not saidCD[m] then
+					saidCD[m] = true
+					say(getgenv().CooldownQuote)
+				end
+				return
+			end
+
+			lastUsed[m] = now
+			saidCD[m] = false
+
+			-- === ATTACK MODE ===
+			stopIdle()
+			ACTIVE_OFFSET = FRONT_OFFSET
+			
+			-- Instant boost
+			bp.P = attackP
+			bp.Position = hrp.Position  -- small snap
+
+			say(skillQuotes[m])
+			press(keyMap[m])
+
+			task.delay(1.8, function()  -- Adjust this timing if needed
+				if not vanished then
+					playIdle()
+					ACTIVE_OFFSET = STAND_OFFSET
+					bp.P = normalP  -- Return to normal smooth follow
+				end
+			end)
+		end
+	end)
+end
+
+-- ===== CONNECT =====
+for _,p in ipairs(Players:GetPlayers()) do
+	if p.Name == targetName then hook(p) end
+end
+
+Players.PlayerAdded:Connect(function(p)
+	if p.Name == targetName then hook(p) end
+end)
+
+-- ===== MAIN LOOP =====
+RunService.Heartbeat:Connect(function()
+	local t = getTargetHRP()
+	if not t then return end
+
+	if hum.Health / hum.MaxHealth <= 0.25 then
+		if not lowHPSaid then
+			lowHPSaid = true
+			say(getgenv().LowHPQuote)
+		end
+		vanished = true
+		stopIdle()
+	end
+
+	if vanished then
+		bp.Position = t.Position + VANISH_OFFSET
+		bg.CFrame = t.CFrame
+	else
+		bp.Position = t.CFrame:PointToWorldSpace(ACTIVE_OFFSET)
+		bg.CFrame = t.CFrame
+	end
+end)
+
+hum.Died:Connect(function()
+	if idleTrack then idleTrack:Stop() end
+end)
