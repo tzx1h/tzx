@@ -11,9 +11,7 @@ local targetName = getgenv().TargetPlayer
 -- ===== CHAT =====
 local function say(msg)
 	local ch = TextChatService.ChatInputBarConfiguration.TargetTextChannel
-	if ch then
-		ch:SendAsync(msg)
-	end
+	if ch then ch:SendAsync(msg) end
 end
 
 -- ===== EXPLOIT =====
@@ -39,39 +37,46 @@ local hrp = char:WaitForChild("HumanoidRootPart")
 local hum = char:WaitForChild("Humanoid")
 hum.PlatformStand = true
 
--- ===== IDLE ANIMATION =====
+-- ===== ANIMATION FIX =====
 local idleAnim = Instance.new("Animation")
 idleAnim.AnimationId = "rbxassetid://102058854064970"
 
 local idleTrack
 local animator = hum:WaitForChild("Animator")
 
+local function stopAllAnimations()
+	for _, track in pairs(animator:GetPlayingAnimationTracks()) do
+		track:Stop(0)
+	end
+end
+
 local function playIdle()
+	stopAllAnimations()
 	if idleTrack then idleTrack:Stop() end
+	
 	idleTrack = animator:LoadAnimation(idleAnim)
-	idleTrack.Priority = Enum.AnimationPriority.Idle
+	idleTrack.Priority = Enum.AnimationPriority.Action4   -- High priority to beat falling
 	idleTrack.Looped = true
 	idleTrack:Play()
 end
 
 local function stopIdle()
-	if idleTrack then idleTrack:Stop() end
+	if idleTrack then idleTrack:Stop(0) end
 end
 
 -- ===== FORCES =====
 local bp = Instance.new("BodyPosition", hrp)
 bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-bp.P = 120000
-bp.D = 2000
+bp.P = 250000      -- Balanced
+bp.D = 1500
 
 local bg = Instance.new("BodyGyro", hrp)
 bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
 bg.P = 1e6
 bg.D = 150
 
--- Save original P for restoring
-local normalP = 120000
-local attackP = 500000   -- Much stronger for instant movement
+local normalP = bp.P
+local attackP = 650000   -- Strong but not crazy
 
 -- ===== NOCLIP =====
 RunService.Stepped:Connect(function()
@@ -90,17 +95,27 @@ local keyMap = {
 	[getgenv().SkillWord4] = Enum.KeyCode.Four
 }
 
-local skillQuotes = { ... } -- (same as before)
+local skillQuotes = {
+	[getgenv().SkillWord1] = getgenv().Skill1Quote,
+	[getgenv().SkillWord2] = getgenv().Skill2Quote,
+	[getgenv().SkillWord3] = getgenv().Skill3Quote,
+	[getgenv().SkillWord4] = getgenv().Skill4Quote
+}
 
-local cooldowns = { ... } -- (same as before)
+local cooldowns = {
+	[getgenv().SkillWord1] = 20,
+	[getgenv().SkillWord2] = 15,
+	[getgenv().SkillWord3] = 10,
+	[getgenv().SkillWord4] = 20
+}
 
 local lastUsed = {}
 local saidCD = {}
 
 local function press(k)
-	VIM:SendKeyEvent(true, k, false, game)
+	VIM:SendKeyEvent(true,k,false,game)
 	task.wait(0.05)
-	VIM:SendKeyEvent(false, k, false, game)
+	VIM:SendKeyEvent(false,k,false,game)
 end
 
 -- ===== TARGET =====
@@ -114,7 +129,6 @@ local function hook(p)
 	p.Chatted:Connect(function(m)
 		m = m:lower():gsub("%s+","")
 
-		-- SUMMON
 		if m == getgenv().SummonWord and hum.Health/hum.MaxHealth > 0.25 then
 			vanished = false
 			lowHPSaid = false
@@ -123,7 +137,6 @@ local function hook(p)
 			return
 		end
 
-		-- DISMISS
 		if m == getgenv().DismissWord then
 			vanished = true
 			stopIdle()
@@ -134,7 +147,6 @@ local function hook(p)
 		-- SKILLS
 		if keyMap[m] and not vanished then
 			local now = tick()
-
 			if now - (lastUsed[m] or 0) < cooldowns[m] then
 				if not saidCD[m] then
 					saidCD[m] = true
@@ -146,22 +158,18 @@ local function hook(p)
 			lastUsed[m] = now
 			saidCD[m] = false
 
-			-- === ATTACK MODE ===
 			stopIdle()
 			ACTIVE_OFFSET = FRONT_OFFSET
-			
-			-- Instant boost
-			bp.P = attackP
-			bp.Position = hrp.Position  -- small snap
+			bp.P = attackP   -- Strong push forward
 
 			say(skillQuotes[m])
 			press(keyMap[m])
 
-			task.delay(1.8, function()  -- Adjust this timing if needed
+			task.delay(1.6, function()
 				if not vanished then
-					playIdle()
+					bp.P = normalP
 					ACTIVE_OFFSET = STAND_OFFSET
-					bp.P = normalP  -- Return to normal smooth follow
+					playIdle()
 				end
 			end)
 		end
@@ -197,6 +205,15 @@ RunService.Heartbeat:Connect(function()
 	else
 		bp.Position = t.CFrame:PointToWorldSpace(ACTIVE_OFFSET)
 		bg.CFrame = t.CFrame
+	end
+end)
+
+-- Extra anti-fall protection
+hum.StateChanged:Connect(function(_, new)
+	if new == Enum.HumanoidStateType.Freefall or new == Enum.HumanoidStateType.FallingDown then
+		if not vanished and idleTrack and idleTrack.IsPlaying then
+			hum:ChangeState(Enum.HumanoidStateType.Running)
+		end
 	end
 end)
 
