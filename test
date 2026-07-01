@@ -1,4 +1,4 @@
---6MAIN CODE
+--7MAIN CODE
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,7 +15,7 @@ local lastDefendTime = 0
 
 -- ===== CHAT =====
 local function say(msg)
-	if not msg then return end  -- ← Fixed: prevent nil error
+	if not msg then return end
 	local ch = TextChatService.ChatInputBarConfiguration.TargetTextChannel
 	if ch then ch:SendAsync(msg) end
 end
@@ -33,32 +33,61 @@ local FRONT_OFFSET = Vector3.new(0, 0.1, -5.5)
 local VANISH_OFFSET = Vector3.new(0, -600, 0)
 
 local STAND_OFFSET = (getgenv().standPosition == "left") and LEFT_OFFSET or RIGHT_OFFSET
-local ACTIVE_OFFSET = STAND_OFFSET
 
 local vanished = true
 local lowHPSaid = false
 local isAttacking = false
 
--- ===== CHARACTER =====
-local char = lp.Character or lp.CharacterAdded:Wait()
-local hrp = char:WaitForChild("HumanoidRootPart")
-local hum = char:WaitForChild("Humanoid")
-hum.PlatformStand = true
+local char, hrp, hum, bp, bg, idleTrack, animator
 
-local animateScript = char:FindFirstChild("Animate")
-if animateScript then animateScript.Disabled = true end
+-- ===== RECREATE ON RESET =====
+local function setupCharacter()
+	char = lp.Character or lp.CharacterAdded:Wait()
+	hrp = char:WaitForChild("HumanoidRootPart")
+	hum = char:WaitForChild("Humanoid")
+	hum.PlatformStand = true
+
+	animator = hum:WaitForChild("Animator")
+
+	local animateScript = char:FindFirstChild("Animate")
+	if animateScript then animateScript.Disabled = true end
+
+	-- Forces
+	if bp then bp:Destroy() end
+	if bg then bg:Destroy() end
+
+	bp = Instance.new("BodyPosition", hrp)
+	bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+	bp.P = 180000
+	bp.D = 1800
+
+	bg = Instance.new("BodyGyro", hrp)
+	bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+	bg.P = 1e6
+	bg.D = 150
+
+	-- Noclip
+	RunService.Stepped:Connect(function()
+		for _, v in ipairs(char:GetDescendants()) do
+			if v:IsA("BasePart") then v.CanCollide = false end
+		end
+	end)
+end
+
+setupCharacter()
+
+lp.CharacterAdded:Connect(function()
+	task.wait(0.5)
+	setupCharacter()
+end)
 
 -- ===== IDLE ANIMATION =====
 local idleAnim = Instance.new("Animation")
 idleAnim.AnimationId = "rbxassetid://17124061663"
 
-local idleTrack
-local animator = hum:WaitForChild("Animator")
-
 local function playIdle()
 	if vanished or isAttacking then return end
 	if idleTrack and idleTrack.IsPlaying then return end
-	
 	if idleTrack then idleTrack:Destroy() end
 	
 	idleTrack = animator:LoadAnimation(idleAnim)
@@ -79,8 +108,8 @@ local keyMap = {
 	[getgenv().SkillWord4 and getgenv().SkillWord4:lower()] = Enum.KeyCode.Four
 }
 
-local skillQuotes = { ... } -- ← Make sure this table is filled correctly
-local cooldowns = { ... }   -- ← Make sure this table is filled correctly
+local skillQuotes = { ... } 
+local cooldowns = { ... }   
 local lastUsed = {}
 local saidCD = {}
 
@@ -90,7 +119,7 @@ local function press(k)
 	VIM:SendKeyEvent(false, k, false, game)
 end
 
--- ===== AUTO DEFEND =====
+-- ===== AUTO DEFEND (Improved) =====
 local function getRandomAvailableSkill()
 	local available = {}
 	local now = tick()
@@ -99,7 +128,6 @@ local function getRandomAvailableSkill()
 		if word then
 			local cd = cooldowns[word] or 0
 			local last = lastUsed[word] or 0
-			
 			if now - last >= cd then
 				table.insert(available, {word = word, key = key})
 			end
@@ -112,10 +140,18 @@ end
 
 local function autoDefendAttack(attackerHRP)
 	if not attackerHRP or isAttacking then return end
+	if not hrp then return end
 	
 	isAttacking = true
 	stopIdle()
+	
+	-- Go in front of attacker
+	local attackerCFrame = attackerHRP.CFrame
 	ACTIVE_OFFSET = FRONT_OFFSET
+	bp.Position = attackerCFrame:PointToWorldSpace(FRONT_OFFSET)
+	bg.CFrame = attackerCFrame
+	
+	task.wait(0.4) -- small delay to move into position
 	
 	local skill = getRandomAvailableSkill()
 	
@@ -124,14 +160,23 @@ local function autoDefendAttack(attackerHRP)
 		press(skill.key)
 	end
 	
-	task.delay(2.8, function()
+	task.delay(2.5, function()
 		isAttacking = false
 		ACTIVE_OFFSET = STAND_OFFSET
-		if not vanished then playIdle() end
+		
+		-- Return to owner
+		local target = getTargetHRP()
+		if target and not vanished then
+			bp.Position = target.CFrame:PointToWorldSpace(STAND_OFFSET)
+			bg.CFrame = target.CFrame
+			playIdle()
+		end
 	end)
 end
 
--- ===== HELPER FUNCTIONS =====
+-- ===== OWNER DEFEND SETUP =====
+local ownerHumConnection
+
 local function getClosestAttacker(ownerHRP)
 	local closest = nil
 	local minDist = 6
@@ -159,10 +204,10 @@ local function setupOwnerDefend()
 	
 	local function connectHealth()
 		if owner.Character then
-			local hum = owner.Character:FindFirstChild("Humanoid")
-			if hum then
-				ownerHumConnection = hum.HealthChanged:Connect(function(health)
-					if autoDefend and health < hum.MaxHealth and tick() - lastDefendTime > 2.5 then
+			local ohum = owner.Character:FindFirstChild("Humanoid")
+			if ohum then
+				ownerHumConnection = ohum.HealthChanged:Connect(function(health)
+					if autoDefend and health < ohum.MaxHealth and tick() - lastDefendTime > 2.5 then
 						lastDefendTime = tick()
 						local ownerHRP = owner.Character:FindFirstChild("HumanoidRootPart")
 						if ownerHRP then
@@ -187,24 +232,7 @@ end
 
 setupOwnerDefend()
 
--- ===== FORCES & NOCLIP =====
-local bp = Instance.new("BodyPosition", hrp)
-bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-bp.P = 180000
-bp.D = 1800
-
-local bg = Instance.new("BodyGyro", hrp)
-bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-bg.P = 1e6
-bg.D = 150
-
-RunService.Stepped:Connect(function()
-	for _, v in ipairs(char:GetDescendants()) do
-		if v:IsA("BasePart") then v.CanCollide = false end
-	end
-end)
-
--- ===== CHAT HOOK =====
+-- ===== TARGET & CHAT HOOK =====
 local function getTargetHRP()
 	local p = Players:FindFirstChild(targetName)
 	return p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
@@ -237,7 +265,6 @@ local function hook(p)
 			return
 		end
 
-		-- Skill Usage
 		if keyMap[m] and not vanished then
 			local now = tick()
 			if now - (lastUsed[m] or 0) < (cooldowns[m] or 0) then
@@ -255,7 +282,7 @@ local function hook(p)
 			stopIdle()
 			ACTIVE_OFFSET = FRONT_OFFSET
 
-			-- Safe quote
+			say(skillQuotes[m])
 			press(keyMap[m])
 
 			task.delay(1.8, function()
@@ -281,7 +308,7 @@ end)
 -- ===== MAIN LOOP =====
 RunService.Heartbeat:Connect(function()
 	local t = getTargetHRP()
-	if not t then return end
+	if not t or not hrp then return end
 
 	if hum.Health / hum.MaxHealth <= 0.25 then
 		if not lowHPSaid then
@@ -296,8 +323,8 @@ RunService.Heartbeat:Connect(function()
 	if vanished then
 		bp.Position = t.Position + VANISH_OFFSET
 		bg.CFrame = t.CFrame
-	else
-		bp.Position = t.CFrame:PointToWorldSpace(ACTIVE_OFFSET)
+	elseif not isAttacking then
+		bp.Position = t.CFrame:PointToWorldSpace(STAND_OFFSET)
 		bg.CFrame = t.CFrame
 	end
 end)
