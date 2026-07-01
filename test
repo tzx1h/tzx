@@ -256,8 +256,6 @@ local function hook(p)
 			ACTIVE_OFFSET = FRONT_OFFSET
 
 			-- Safe quote
-			local quote = skillQuotes[m] or "Using skill..."
-			say(quote)
 			press(keyMap[m])
 
 			task.delay(1.8, function()
