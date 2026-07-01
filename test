@@ -70,17 +70,38 @@ local function stopIdle()
 	if idleTrack then idleTrack:Stop() end
 end
 
+-- ===== SKILLS SETUP (Fixed for letters) =====
+local keyMap = {
+	[getgenv().SkillWord1 and getgenv().SkillWord1:lower()] = Enum.KeyCode.One,
+	[getgenv().SkillWord2 and getgenv().SkillWord2:lower()] = Enum.KeyCode.Two,
+	[getgenv().SkillWord3 and getgenv().SkillWord3:lower()] = Enum.KeyCode.Three,
+	[getgenv().SkillWord4 and getgenv().SkillWord4:lower()] = Enum.KeyCode.Four
+}
+
+local skillQuotes = { ... } -- Your original quotes table
+local cooldowns = { ... }   -- Your original cooldowns table
+local lastUsed = {}
+local saidCD = {}
+
+local function press(k)
+	VIM:SendKeyEvent(true, k, false, game)
+	task.wait(0.05)
+	VIM:SendKeyEvent(false, k, false, game)
+end
+
 -- ===== AUTO DEFEND (Silent) =====
 local function getRandomAvailableSkill()
 	local available = {}
 	local now = tick()
 
 	for word, key in pairs(keyMap) do
-		local cd = cooldowns[word] or 0
-		local last = lastUsed[word] or 0
-		
-		if now - last >= cd then
-			table.insert(available, {word = word, key = key})
+		if word then  -- prevent nil keys
+			local cd = cooldowns[word] or cooldowns[word:upper()] or 0
+			local last = lastUsed[word] or 0
+			
+			if now - last >= cd then
+				table.insert(available, {word = word, key = key})
+			end
 		end
 	end
 
@@ -98,14 +119,8 @@ local function autoDefendAttack(attackerHRP)
 	local skill = getRandomAvailableSkill()
 	
 	if skill then
-		local word = skill.word
-		local key = skill.key
-		
-		lastUsed[word] = tick()  -- Update cooldown
-		press(key)               -- Silent skill use
-		-- No chat message
-	else
-		-- Still do nothing visible if all on cooldown
+		lastUsed[skill.word] = tick()
+		press(skill.key)
 	end
 	
 	task.delay(2.8, function()
@@ -117,6 +132,25 @@ end
 
 -- ===== OWNER DEFEND SETUP =====
 local ownerHumConnection
+
+local function getClosestAttacker(ownerHRP)
+	local closest = nil
+	local minDist = 6
+	
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr.Character and plr.Name ~= OWNER_NAME and plr ~= lp then
+			local aHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+			if aHRP then
+				local dist = (ownerHRP.Position - aHRP.Position).Magnitude
+				if dist < minDist then
+					minDist = dist
+					closest = aHRP
+				end
+			end
+		end
+	end
+	return closest
+end
 
 local function setupOwnerDefend()
 	local owner = Players:FindFirstChild(OWNER_NAME)
@@ -172,48 +206,10 @@ RunService.Stepped:Connect(function()
 	end
 end)
 
--- ===== SKILLS =====
-local keyMap = {
-	[getgenv().SkillWord1] = Enum.KeyCode.One,
-	[getgenv().SkillWord2] = Enum.KeyCode.Two,
-	[getgenv().SkillWord3] = Enum.KeyCode.Three,
-	[getgenv().SkillWord4] = Enum.KeyCode.Four
-}
-
-local skillQuotes = { ... } -- keep your original quotes table
-local cooldowns = { ... }   -- keep your original cooldowns
-local lastUsed = {}
-local saidCD = {}
-
-local function press(k)
-	VIM:SendKeyEvent(true, k, false, game)
-	task.wait(0.05)
-	VIM:SendKeyEvent(false, k, false, game)
-end
-
--- ===== TARGET & CHAT HOOK =====
+-- ===== CHAT HOOK =====
 local function getTargetHRP()
 	local p = Players:FindFirstChild(targetName)
 	return p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-end
-
-local function getClosestAttacker(ownerHRP)
-	local closest = nil
-	local minDist = 6
-	
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr.Character and plr.Name ~= OWNER_NAME and plr ~= lp then
-			local aHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-			if aHRP then
-				local dist = (ownerHRP.Position - aHRP.Position).Magnitude
-				if dist < minDist then
-					minDist = dist
-					closest = aHRP
-				end
-			end
-		end
-	end
-	return closest
 end
 
 local function hook(p)
@@ -222,7 +218,6 @@ local function hook(p)
 
 		if m == ".ad" then
 			autoDefend = not autoDefend
-			say(autoDefend and "Auto defend enabled" or "Auto defend disabled")
 			return
 		end
 
@@ -244,6 +239,7 @@ local function hook(p)
 			return
 		end
 
+		-- Manual Skill Usage
 		if keyMap[m] and not vanished then
 			local now = tick()
 			if now - (lastUsed[m] or 0) < (cooldowns[m] or 0) then
@@ -312,10 +308,6 @@ RunService.Heartbeat:Connect(function()
 	if not vanished and hum:GetState() == Enum.HumanoidStateType.Freefall then
 		hum:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
 	end
-end)
-
-lp.CharacterAdded:Connect(function(newChar)
-	task.wait(1)
 end)
 
 hum.Died:Connect(function()
