@@ -1,4 +1,4 @@
---4MAIN CODE
+--5MAIN CODE
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -15,6 +15,7 @@ local lastDefendTime = 0
 
 -- ===== CHAT =====
 local function say(msg)
+	if not msg then return end  -- ← Fixed: prevent nil error
 	local ch = TextChatService.ChatInputBarConfiguration.TargetTextChannel
 	if ch then ch:SendAsync(msg) end
 end
@@ -70,7 +71,7 @@ local function stopIdle()
 	if idleTrack then idleTrack:Stop() end
 end
 
--- ===== SKILLS SETUP (Fixed for letters) =====
+-- ===== SKILLS SETUP =====
 local keyMap = {
 	[getgenv().SkillWord1 and getgenv().SkillWord1:lower()] = Enum.KeyCode.One,
 	[getgenv().SkillWord2 and getgenv().SkillWord2:lower()] = Enum.KeyCode.Two,
@@ -78,8 +79,8 @@ local keyMap = {
 	[getgenv().SkillWord4 and getgenv().SkillWord4:lower()] = Enum.KeyCode.Four
 }
 
-local skillQuotes = { ... } -- Your original quotes table
-local cooldowns = { ... }   -- Your original cooldowns table
+local skillQuotes = { ... } -- ← Make sure this table is filled correctly
+local cooldowns = { ... }   -- ← Make sure this table is filled correctly
 local lastUsed = {}
 local saidCD = {}
 
@@ -89,14 +90,14 @@ local function press(k)
 	VIM:SendKeyEvent(false, k, false, game)
 end
 
--- ===== AUTO DEFEND (Silent) =====
+-- ===== AUTO DEFEND =====
 local function getRandomAvailableSkill()
 	local available = {}
 	local now = tick()
 
 	for word, key in pairs(keyMap) do
-		if word then  -- prevent nil keys
-			local cd = cooldowns[word] or cooldowns[word:upper()] or 0
+		if word then
+			local cd = cooldowns[word] or 0
 			local last = lastUsed[word] or 0
 			
 			if now - last >= cd then
@@ -130,9 +131,7 @@ local function autoDefendAttack(attackerHRP)
 	end)
 end
 
--- ===== OWNER DEFEND SETUP =====
-local ownerHumConnection
-
+-- ===== HELPER FUNCTIONS =====
 local function getClosestAttacker(ownerHRP)
 	local closest = nil
 	local minDist = 6
@@ -188,7 +187,7 @@ end
 
 setupOwnerDefend()
 
--- ===== FORCES =====
+-- ===== FORCES & NOCLIP =====
 local bp = Instance.new("BodyPosition", hrp)
 bp.MaxForce = Vector3.new(1e9, 1e9, 1e9)
 bp.P = 180000
@@ -199,7 +198,6 @@ bg.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
 bg.P = 1e6
 bg.D = 150
 
--- ===== NOCLIP =====
 RunService.Stepped:Connect(function()
 	for _, v in ipairs(char:GetDescendants()) do
 		if v:IsA("BasePart") then v.CanCollide = false end
@@ -221,7 +219,7 @@ local function hook(p)
 			return
 		end
 
-		if m == getgenv().SummonWord and hum.Health/hum.MaxHealth > 0.25 then
+		if m == (getgenv().SummonWord or "summon"):lower() and hum.Health/hum.MaxHealth > 0.25 then
 			vanished = false
 			lowHPSaid = false
 			isAttacking = false
@@ -231,7 +229,7 @@ local function hook(p)
 			return
 		end
 
-		if m == getgenv().DismissWord then
+		if m == (getgenv().DismissWord or "dismiss"):lower() then
 			vanished = true
 			isAttacking = false
 			stopIdle()
@@ -239,7 +237,7 @@ local function hook(p)
 			return
 		end
 
-		-- Manual Skill Usage
+		-- Skill Usage
 		if keyMap[m] and not vanished then
 			local now = tick()
 			if now - (lastUsed[m] or 0) < (cooldowns[m] or 0) then
@@ -257,7 +255,9 @@ local function hook(p)
 			stopIdle()
 			ACTIVE_OFFSET = FRONT_OFFSET
 
-			say(skillQuotes[m])
+			-- Safe quote
+			local quote = skillQuotes[m] or "Using skill..."
+			say(quote)
 			press(keyMap[m])
 
 			task.delay(1.8, function()
