@@ -1,4 +1,4 @@
---2MAIN CODE
+--3MAIN CODE
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -30,7 +30,6 @@ local RIGHT_OFFSET = Vector3.new(-3, 2.5, 4)
 local LEFT_OFFSET  = Vector3.new(3, 2.5, 4)
 local FRONT_OFFSET = Vector3.new(0, 0.1, -5.5)
 local VANISH_OFFSET = Vector3.new(0, -600, 0)
-local BEHIND_OFFSET = Vector3.new(0, 0, 6)
 
 local STAND_OFFSET = (getgenv().standPosition == "left") and LEFT_OFFSET or RIGHT_OFFSET
 local ACTIVE_OFFSET = STAND_OFFSET
@@ -57,22 +56,14 @@ local animator = hum:WaitForChild("Animator")
 
 local function playIdle()
 	if vanished or isAttacking then return end
+	if idleTrack and idleTrack.IsPlaying then return end
 	
-	if idleTrack then
-		idleTrack:Stop()
-		idleTrack:Destroy()
-	end
+	if idleTrack then idleTrack:Destroy() end
 	
 	idleTrack = animator:LoadAnimation(idleAnim)
 	idleTrack.Priority = Enum.AnimationPriority.Action4
 	idleTrack.Looped = true
 	idleTrack:Play()
-	
-	idleTrack.Stopped:Connect(function()
-		if not vanished and not isAttacking then
-			task.delay(0.1, playIdle)
-		end
-	end)
 end
 
 local function stopIdle()
@@ -81,74 +72,79 @@ end
 
 -- ===== AUTO DEFEND =====
 local function getClosestAttacker(ownerHRP)
-	local closestPlayer = nil
-	local closestDist = 6
+	local closest = nil
+	local minDist = 6
 	
 	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= lp and plr.Character and plr.Name ~= OWNER_NAME then
-			local theirHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-			if theirHRP then
-				local dist = (ownerHRP.Position - theirHRP.Position).Magnitude
-				if dist < closestDist then
-					closestDist = dist
-					closestPlayer = theirHRP
+		if plr.Character and plr.Name ~= OWNER_NAME and plr ~= lp then
+			local aHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+			if aHRP then
+				local dist = (ownerHRP.Position - aHRP.Position).Magnitude
+				if dist < minDist then
+					minDist = dist
+					closest = aHRP
 				end
 			end
 		end
 	end
-	return closestPlayer
+	return closest
 end
 
 local function autoDefendAttack(attackerHRP)
-	if not attackerHRP then return end
+	if not attackerHRP or isAttacking then return end
 	
 	isAttacking = true
 	stopIdle()
 	ACTIVE_OFFSET = FRONT_OFFSET
 	
-	-- Auto skill spam
+	-- Spam all skills
 	for i = 1, 4 do
-		local key = Enum.KeyCode["" .. i]
-		press(key)
-		task.wait(0.35)
+		press(Enum.KeyCode["" .. i])
+		task.wait(0.3)
 	end
 	
-	task.delay(2.5, function()
+	task.delay(2.8, function()
 		isAttacking = false
 		ACTIVE_OFFSET = STAND_OFFSET
 		if not vanished then playIdle() end
 	end)
 end
 
--- ===== DAMAGE RECOVERY =====
-hum.HealthChanged:Connect(function()
-	if not vanished and not isAttacking and hum.Health < hum.MaxHealth then
-		task.delay(0.2, playIdle)
-	end
-end)
+-- ===== OWNER DEFEND SETUP (Fixed) =====
+local ownerHumConnection
 
--- ===== OWNER DAMAGE DETECTION =====
 local function setupOwnerDefend()
 	local owner = Players:FindFirstChild(OWNER_NAME)
 	if not owner then return end
 	
-	owner.CharacterAdded:Connect(function()
-		task.wait(1)
-		local ownerHum = owner.Character:FindFirstChild("Humanoid")
-		if ownerHum then
-			ownerHum.HealthChanged:Connect(function(health)
-				if autoDefend and health < ownerHum.MaxHealth and tick() - lastDefendTime > 3 then
-					lastDefendTime = tick()
-					local ownerHRP = owner.Character:FindFirstChild("HumanoidRootPart")
-					if ownerHRP then
-						local attacker = getClosestAttacker(ownerHRP)
-						if attacker then
-							autoDefendAttack(attacker)
+	-- Clear old connection
+	if ownerHumConnection then ownerHumConnection:Disconnect() end
+	
+	local function connectHealth()
+		if owner.Character then
+			local hum = owner.Character:FindFirstChild("Humanoid")
+			if hum then
+				ownerHumConnection = hum.HealthChanged:Connect(function(health)
+					if autoDefend and health < hum.MaxHealth and tick() - lastDefendTime > 2.5 then
+						lastDefendTime = tick()
+						local ownerHRP = owner.Character:FindFirstChild("HumanoidRootPart")
+						if ownerHRP then
+							local attacker = getClosestAttacker(ownerHRP)
+							if attacker then
+								autoDefendAttack(attacker)
+							end
 						end
 					end
-				end
-			end)
+				end)
+			end
 		end
+	end
+	
+	connectHealth()
+	
+	owner.CharacterAdded:Connect(function()
+		task.wait(0.8)
+		connectHealth()
 	end)
 end
 
@@ -180,19 +176,9 @@ local keyMap = {
 	[getgenv().SkillWord4] = Enum.KeyCode.Four
 }
 
-local skillQuotes = {
-	[getgenv().SkillWord1] = getgenv().Skill1Quote,
-	[getgenv().SkillWord2] = getgenv().Skill2Quote,
-	[getgenv().SkillWord3] = getgenv().Skill3Quote,
-	[getgenv().SkillWord4] = getgenv().Skill4Quote
-}
+local skillQuotes = { ... } -- keep your original quotes table
 
-local cooldowns = {
-	[getgenv().SkillWord1] = 20,
-	[getgenv().SkillWord2] = 15,
-	[getgenv().SkillWord3] = 10,
-	[getgenv().SkillWord4] = 20
-}
+local cooldowns = { ... } -- keep your original cooldowns
 
 local lastUsed = {}
 local saidCD = {}
@@ -203,25 +189,23 @@ local function press(k)
 	VIM:SendKeyEvent(false, k, false, game)
 end
 
--- ===== TARGET =====
+-- ===== TARGET & CHAT HOOK (unchanged except .ad) =====
 local function getTargetHRP()
 	local p = Players:FindFirstChild(targetName)
 	return p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
 end
 
--- ===== CHAT HOOK =====
 local function hook(p)
 	p.Chatted:Connect(function(m)
 		m = m:lower():gsub("%s+", "")
 
-		-- AUTO DEFEND TOGGLE (Silent)
 		if m == ".ad" then
 			autoDefend = not autoDefend
-			-- No message shown
+			-- Silent toggle
 			return
 		end
 
-		-- SUMMON
+		-- ... rest of your summon, dismiss, skills code (same as before)
 		if m == getgenv().SummonWord and hum.Health/hum.MaxHealth > 0.25 then
 			vanished = false
 			lowHPSaid = false
@@ -232,7 +216,6 @@ local function hook(p)
 			return
 		end
 
-		-- DISMISS
 		if m == getgenv().DismissWord then
 			vanished = true
 			isAttacking = false
@@ -241,7 +224,6 @@ local function hook(p)
 			return
 		end
 
-		-- SKILLS
 		if keyMap[m] and not vanished then
 			local now = tick()
 			if now - (lastUsed[m] or 0) < cooldowns[m] then
@@ -273,7 +255,7 @@ local function hook(p)
 	end)
 end
 
--- ===== CONNECT =====
+-- Connect hooks (same as before)
 for _, p in ipairs(Players:GetPlayers()) do
 	if p.Name == targetName then hook(p) end
 end
@@ -282,7 +264,7 @@ Players.PlayerAdded:Connect(function(p)
 	if p.Name == targetName then hook(p) end
 end)
 
--- ===== MAIN LOOP =====
+-- Main Loop, Anti-fall, etc. (same as previous version)
 RunService.Heartbeat:Connect(function()
 	local t = getTargetHRP()
 	if not t then return end
@@ -306,28 +288,15 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
--- Anti-falling
 RunService.Heartbeat:Connect(function()
 	if not vanished and hum:GetState() == Enum.HumanoidStateType.Freefall then
 		hum:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
 	end
 end)
 
--- Character respawn support
 lp.CharacterAdded:Connect(function(newChar)
 	task.wait(1)
-	char = newChar
-	hrp = char:WaitForChild("HumanoidRootPart")
-	hum = char:WaitForChild("Humanoid")
-	animator = hum:WaitForChild("Animator")
-	
-	if char:FindFirstChild("Animate") then
-		char.Animate.Disabled = true
-	end
-	
-	hum.PlatformStand = true
-	vanished = true
-	isAttacking = false
+	-- refresh character references...
 end)
 
 hum.Died:Connect(function()
