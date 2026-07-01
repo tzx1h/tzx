@@ -39,7 +39,7 @@ hum.PlatformStand = true
 
 -- ===== IDLE ANIMATION =====
 local idleAnim = Instance.new("Animation")
-idleAnim.AnimationId = "rbxassetid://102058854064970"
+idleAnim.AnimationId = "rbxassetid://17124061663"
 
 local idleTrack
 local animator = hum:WaitForChild("Animator")
